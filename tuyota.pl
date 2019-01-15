@@ -57,7 +57,7 @@ my $UpgradeResponse = '{' .
       '"e":false,' .
       '"success":true' .
     '}';
-    
+
 sub SetupInterface {
     my $if = shift;
 
@@ -134,48 +134,6 @@ sub ScanForWlan {
     }
     print("Wifi device is $WiFiDevice\n");
 }
-sub SetupCloneDevices {
-    my $fh;
-
-    #
-    # Its possible the script was run previously
-    # so dont make any assumptions about the devices
-    #
-    ScanForWlan();
-    unless($WiFiAPPresent) {
-      print("Adding WiFi device for Access Point\n");
-      open($fh,"iw dev $WiFiDevice interface add $WiFiAPDevice type station |") or
-        die "Couldn't run 'iw' command. Can not continue: $!";
-      print($_) while(<$fh>);
-      unless(close($fh)) {
-        print("There is a problem with iw command. Can not continue\n");
-        exit(0);
-      }
-    }
-    unless($WiFiSCPresent) {
-      print("Adding WiFi device for Scan/Connect\n");
-      open($fh,"iw dev $WiFiDevice interface add $WiFiSCDevice type station |") or
-        die "Couldn't run 'iw' command. Can not continue: $!";
-      print($_) while(<$fh>);
-      unless(close($fh)) {
-        print("There is a problem with iw command. Can not continue\n");
-        exit(0);
-      }
-    }
-    # Generate mac addresses for the new devices
-    my $mac;
-    $mac = join(":", map { sprintf("%02x", 2 * int(rand(128))) } (1..6));
-    system("ip link set dev $WiFiAPDevice down");
-    system("ip link set dev $WiFiAPDevice address $mac");
-    $mac = join(":", map { sprintf("%02x", 2 * int(rand(128))) } (1..6));
-    system("ip link set dev $WiFiSCDevice down");
-    system("ip link set dev $WiFiSCDevice address $mac");
-    print("Assigning IP addresses to interfaces\n");
-    print("Giving Access Point IP address $WiFiIPAddr\n");
-    system("ip a add $WiFiIPAddr/24 dev $WiFiAPDevice");
-    print("Giving Scan/Connect device IP address $WiFiIPAddr\n");
-    system("ip a add $FinalStageIP/24 dev $WiFiSCDevice");
-}
 sub SetupAccessPoint {
     my $mon = shift;
     my $fh;
@@ -233,13 +191,6 @@ sub SetupDHCP {
       Broadcast => 1,
     ) or die "Unable to create DHCP Listener socket! $!";
     # The DHCP sender
-    my $sockout = IO::Socket::INET->new(
-      Proto => 'udp',
-      LocalAddr => $WiFiIPAddr,
-      LocalPort => 67,
-      ReuseAddr => 1,
-      Broadcast => 1,
-    ) or die "Unable to create DHCP Listener socket! $!";
 
     # Setup an IP address table for leases
     ($WiFiSubnet) = $WiFiIPAddr =~ /(.*)[.]\d+/;
@@ -250,9 +201,6 @@ sub SetupDHCP {
     }
     my $fileno = $sockin->fileno;
     $mon->{IOset}->add($sockin);
-    $mon->{Callbacks}{$fileno}{Read}  = [ \&CB_DHCPRead, $Leases ];
-    my $fileno = $sockout->fileno;
-    $mon->{IOset}->add($sockout);
     $mon->{Callbacks}{$fileno}{Read}  = [ \&CB_DHCPRead, $Leases ];
 }
 sub SetupDNS {
@@ -340,19 +288,23 @@ sub RedirectDevice {
       return;
     }
 
-    sleep(1);
-    eval { $socket->send($pkt); };
+    sleep(5);
+    my $n = $socket->send($pkt);
+    if($n == length($pkt)) {
+      print("**** Redirect appears successful\n");
+    }
     sleep(1);
     close($socket);
 }
 sub CheckBinaries {
+
     unless(-r $StageOneFirmware) {
       print("Stage One firmware not found, downloading it\n");
-      system("wget","https://github.com/mirko/SonOTA/raw/master/static/image_user2-0x81000.bin");
+      system("wget","https://github.com/SynAckFin/TuyOTA/raw/master/static/image_user2-0x81000.bin");
     }
     unless(-r $StageTwoFirmware) {
       print("Stage Two firmware not found, downloading it\n");
-      system("wget","https://github.com/arendst/Sonoff-Tasmota/releases/download/v6.2.1/sonoff.bin");
+      system("wget","https://github.com/SynAckFin/TuyOTA/raw/master/static/sonoff.bin");
     }
     unless( -s $StageOneFirmware == 239220 ) {
       printf("Error %s is wrong size, should be 239220 bytes but is actually %i\n",
@@ -362,7 +314,7 @@ sub CheckBinaries {
     unless( -s $StageTwoFirmware ==  482512 ) {
       printf("Error %s is wrong size, should be 482512 bytes but is actually %i\n",
                       $StageTwoFirmware, -s $StageTwoFirmware);
-#      exit(0);
+      exit(0);
     }
 }
 sub HandleSonoff {
@@ -403,7 +355,7 @@ sub HandleSonoff {
     system("iwconfig $WiFiSCDevice essid off");
     return 1;
 }
-sub Xusage {
+sub usage {
     print("usage: $0 [-t Timeout] [-b BeginStage] [-ip DeviceIP] [-s SSID] [-p password]\n");
     print("    Timeout    - Default 30. Seconds of inactivity before moving on\n");
     print("    BeginStage - Default 1. Stage to start at. Can be 1,2, or 3\n");
@@ -418,9 +370,7 @@ sub Xusage {
     print("       Hands out 1st stage firmware to any device that asks for it\n");
     print("\n");
     print("    Stage 2:\n");
-    print("       Looks for a device running 1st stage firmware and installs Tasmota.\n");
-    print("\n");
-    print("    Stage 3:\n");
+    print("       Looks for a device running 1st stage firmware and installs sonoff.bin.\n");
     print("       Configures devices with SSID and Password if specified on commandline\n"); 
     exit(1);
 }
@@ -471,7 +421,7 @@ sub CB_AccessPointRead {
 
     $_ = <$fh>;
     if(length($_)) {
-      print "AP: $_";
+#      print "AP: $_";
       return 0;
     }
     print("***** Access Point has Shutdown *****\n");
@@ -523,28 +473,6 @@ sub CB_DeviceMonitorRead {
       
     }
     return 0;
-}
-sub DumpDhcp {
-    my $pkt = shift;
-    my ($op,$htype,$hlen,$hops,$xid,$secs,$flags,$pkt) = unpack("CCCCNnna*",$pkt);
-    print("Recieved DHCP packet\n");
-    print("op:    $op\n");
-    print("htype: $htype\n");
-    print("hlen:  $hlen\n");
-    print("hops:  $hops\n");
-    print("xid:   $xid\n");
-    print("secs:  $secs\n");
-    print("flags: $flags\n");
-    my ($cip,$yip,$sip,$gip,$hwaddr,$pad,$sname,$file,$cookie,$options) = unpack("NNNNa6a10Z64Z128Na*",$pkt);
-    printf("Client IP: %08x\n",$cip);
-    printf("Your IP:   %08x\n",$yip);
-    printf("Next IP:   %08x\n",$sip);
-    printf("Relay IP:  %08x\n",$gip);
-    my $mac = sprintf("%02x:%02x:%02x:%02x:%02x:%02x",unpack("C*",$hwaddr));
-    printf("MAC: $mac Option length %i\n",length($options));
-    printf("Server name: %s\n",$sname);
-    printf("File name: %s\n",$file);
-    printf("Cookie: %08x\n",$cookie);
 }
 sub CB_DHCPRead {
     my ($socket, $mon, $leases) = @_;
@@ -929,15 +857,15 @@ sub END {
 # |____/ \__\__,_|_|   \__|___/ |_| |_|\___|_|  \___| #
 #                                                     #
 #######################################################
-my $IOset = IO::Select->new;
-
 while(@ARGV) {
   my $arg = shift @ARGV;
   if( $arg eq "-s" ) {
     $LocalSSID = shift @ARGV || "";
+    $LocalSSID =~ s/([^\w])/sprintf("%%%02x",ord($1))/egi;
   }
   elsif( $arg eq "-p" ) {
     $LocalPassword = shift @ARGV || "";
+    $LocalPassword =~ s/([^\w])/sprintf("%%%02x",ord($1))/egi;
   }
   elsif( $arg eq "-b" ) {
     $BeginStage = shift @ARGV || 1;
