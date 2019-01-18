@@ -289,7 +289,8 @@ sub RedirectDevice {
     }
 
     sleep(5);
-    my $n = $socket->send($pkt);
+    my $n;
+    eval { $n = $socket->send($pkt); };
     if($n == length($pkt)) {
       print("**** Redirect appears successful\n");
     }
@@ -479,6 +480,10 @@ sub CB_DHCPRead {
     my $pkt;
     my $out;
     my $rv = $socket->recv($pkt,512,0);
+    if( length($pkt) < 243 ) {
+      print("Bad DHCP request - ignoring\n");
+      return 0;
+    }
     # Decode the packet
     my ($op,$htype,$hlen,$hops,$xid,$secs,$flags,$pkt) = unpack("CCCCNnna*",$pkt);
     # Might not be for me.
