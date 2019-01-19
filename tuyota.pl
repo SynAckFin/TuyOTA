@@ -5,6 +5,8 @@ $| = 1;
 use IO::Socket;
 use IO::Select;
 use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
 
 my $LocalSSID = "";                 # The SSID of your network
 my $LocalPassword = "";             # The password for your network
@@ -501,6 +503,7 @@ sub CB_DHCPRead {
         $ip = $_;
         $ip->{MAC} = $mac;
         $leases->{MAC}{$mac}{IP} = $ip;
+        last;
       }
     }
     # Start building reply packet
@@ -526,7 +529,6 @@ sub CB_DHCPRead {
         my ($t) = unpack("C",$options);
         printf("%s %s %s\n",$t == 1 ? "DHCP Discover" : "DHCP Request",$mac,$ip->{IP});
         $pkt .= pack("CCC",$opt,1,$t == 1 ? 2 : 5);
-        $rv = sockaddr_in(68,inet_aton($ip->{IP})) if($t == 1);
       }
       last if( $opt == 255 );
       (undef,$options) = unpack("a$len",$options);
